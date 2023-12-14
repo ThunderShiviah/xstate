@@ -1,11 +1,31 @@
 import readline from "readline";
-import { createMachine, createActor, assign } from "xstate";
+import { createMachine, createActor, assign, sendTo } from "xstate";
 
 /*
-@create #cat "You say meow after each sentence."
 @cat hello.
+system: there is no actor named 'cat'.
+@create #cat "You say meow after each sentence."
+system: created actor with name 'cat' and instructions '"You say meow after each sentence."'
+@cat hello.
+cat: hello meow!
 */
-
+const factory = createMachine({
+  initial: "Ready",
+  states: {
+    Ready: {
+      on: {
+        echoMessage: {
+          actions: [
+            ({ context, event }) => {
+              console.log("I am a cat.Message received!");
+              console.log("event", event);
+            },
+          ],
+        },
+      },
+    },
+  },
+});
 export const machine = createMachine(
   {
     id: "SystemHandler",
@@ -17,24 +37,73 @@ export const machine = createMachine(
             {
               target: "Ready",
               guard: "isCreateRequestMessage",
-              actions: {
-                type: "createActor",
-              },
+              actions: assign({
+                todos: ({ context, spawn }) => {
+                  const newTodo = spawn(factory, {
+                    systemId: `cat`,
+                  });
+                  console.log("Created cat.");
+                  console.log("system_id", newTodo._systemId);
+
+                  return newTodo;
+                },
+              }),
             },
             {
               target: "Ready",
-              actions: {
-                type: "echoInput",
-              },
+              actions: "handleSendMessage",
+              // actions: sendTo(
+              //   ({ system }) => {
+              //     const cat = system.get("cat");
+              //     console.log("cat", cat);
+              //     return cat;
+              //   },
+              //   {
+              //     type: "echoMessage" as const,
+              //     contents: `hi hi`,
+              //   },
+              // ),
             },
           ],
+          echoMessage: {
+            actions: {
+              type: "echoInput",
+            },
+          },
         },
       },
     },
-    types: { events: {} as { type: "receiveInputFromUser"; contents: string } },
+    types: {
+      events: {} as
+        | { type: "echoMessage"; contents: string }
+        | { type: "receiveInputFromUser"; contents: string }
+        | {
+            type: "Message";
+            from_uri: string;
+            to_uri: string;
+            contents: string;
+          },
+    },
   },
   {
     actions: {
+      handleSendMessage: ({ system, event }) => {
+        const messageParts = event.contents.split(" ");
+        let ref;
+        if (messageParts[0].startsWith("@")) {
+          ref = messageParts[0].substring(1);
+        }
+        const actor = ref ? system.get(ref) : undefined;
+        console.log(
+          "system",
+          actor?._systemId ||
+            (ref
+              ? "no actor named " + ref + "\n using system ref"
+              : "no actor referenced \n using system ref "),
+          "",
+        );
+        console.log(`Sending message ${event.contents}`);
+      },
       createActor: ({ context, event }) => {
         const messageContents = event.contents.split(" ");
         const name = messageContents[1];
@@ -45,11 +114,7 @@ export const machine = createMachine(
         );
       },
       echoInput: ({ context, event }) => {
-        const messageContents = event.contents.split(" ");
-        const name = messageContents[0].substring(1); // remove '@'
-        const response_message = messageContents.slice(1).join(" ");
-
-        console.log(`${name}: ${response_message} meow!`);
+        console.log(`echoInput works! ${event.contents}`);
       },
     },
     actors: {},
@@ -62,7 +127,10 @@ export const machine = createMachine(
   },
 );
 
-const inputActor = createActor(machine, {}).start();
+const inputActor = createActor(machine, {
+  systemId: "root-id",
+}).start();
+
 // Create readline interface
 const rl = readline.createInterface({
   input: process.stdin,
